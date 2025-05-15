@@ -1,143 +1,187 @@
 #!/bin/bash
 
-LOG_FILE="/home/$USER/user_management.log"
+# Ensure the script is run as root
+if [[ $EUID -ne 0 ]]; then
+    whiptail --msgbox "This script must be run as root." 10 50
+    exit 1
+fi
 
-# Function to check if script is run as root
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        whiptail --title "Permission Denied" --msgbox "This script must be run as root!" 10 50
-        exit 1
-    fi
-}
+# Data storage paths
+STUDENTS_FILE="students.txt"
+COURSES_FILE="courses.txt"
+ENROLLMENTS_FILE="enrollments.txt"
+LOG_FILE="/var/log/student_management.log"
 
-# Function to log actions
+# Ensure log file exists
+touch "$LOG_FILE"
+
+# Logger function
 log_action() {
     echo "$(date): $1" >> "$LOG_FILE"
 }
 
-# Function to validate username (no special chars)
-validate_username() {
-    if [[ "$1" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
-        return 0
+# Banner
+head_banner() {
+    whiptail --title "Student Management System" \
+    --msgbox "Welcome to the Student Management System" 10 60
+}
+
+# Create Semester
+create_semester() {
+    SEMESTER=$(whiptail --inputbox "Enter semester name (e.g., Fall2025):" 10 50 3>&1 1>&2 2>&3)
+    if [[ "$SEMESTER" =~ ^[A-Za-z0-9]+$ ]]; then
+        echo "Semester: $SEMESTER" >> semesters.txt
+        log_action "Created semester $SEMESTER"
+        whiptail --msgbox "Semester '$SEMESTER' created." 8 40
     else
-        return 1
+        whiptail --msgbox "Invalid semester name." 8 40
     fi
 }
 
-# Add a system user
-add_system_user() {
-    username=$(whiptail --inputbox "Enter new username:" 10 50 3>&1 1>&2 2>&3)
+# Create User
+create_user() {
+    NAME=$(whiptail --inputbox "Enter student name:" 10 50 3>&1 1>&2 2>&3)
+    ID=$(whiptail --inputbox "Enter student ID:" 10 50 3>&1 1>&2 2>&3)
 
-    if ! validate_username "$username"; then
-        whiptail --msgbox "Invalid username format." 8 40
-        return
-    fi
-
-    if id "$username" &>/dev/null; then
-        whiptail --msgbox "User already exists!" 8 40
-        return
-    fi
-
-    password=$(whiptail --passwordbox "Enter password for $username:" 10 50 3>&1 1>&2 2>&3)
-    home_dir=$(whiptail --inputbox "Enter home directory (optional):" 10 50 "/home/$username" 3>&1 1>&2 2>&3)
-
-    useradd -m -d "$home_dir" "$username"
-    echo "$username:$password" | chpasswd
-
-    whiptail --msgbox "User $username added successfully!" 8 50
-    log_action "User added: $username"
-}
-
-# Delete a system user
-delete_system_user() {
-    username=$(whiptail --inputbox "Enter username to delete:" 10 50 3>&1 1>&2 2>&3)
-
-    if ! id "$username" &>/dev/null; then
-        whiptail --msgbox "User does not exist." 8 40
-        return
-    fi
-
-    if whiptail --yesno "Are you sure you want to delete $username?" 10 50; then
-        userdel -r "$username"
-        whiptail --msgbox "User $username deleted." 8 40
-        log_action "User deleted: $username"
+    if [[ "$NAME" =~ ^[A-Za-z\ ]+$ && "$ID" =~ ^[0-9]+$ ]]; then
+        echo "$ID:$NAME" >> "$STUDENTS_FILE"
+        log_action "Created student $NAME ($ID)"
+        whiptail --msgbox "User $NAME created." 8 40
     else
-        whiptail --msgbox "Deletion cancelled." 8 40
+        whiptail --msgbox "Invalid name or ID." 8 40
     fi
 }
 
-# Modify user details
-modify_system_user() {
-    username=$(whiptail --inputbox "Enter username to modify:" 10 50 3>&1 1>&2 2>&3)
+# Create Course
+create_course() {
+    COURSE_NAME=$(whiptail --inputbox "Enter course name:" 10 50 3>&1 1>&2 2>&3)
+    COURSE_ID=$(whiptail --inputbox "Enter course ID:" 10 50 3>&1 1>&2 2>&3)
 
-    if ! id "$username" &>/dev/null; then
-        whiptail --msgbox "User does not exist." 8 40
-        return
+    if [[ "$COURSE_NAME" =~ ^[A-Za-z0-9\ ]+$ && "$COURSE_ID" =~ ^[A-Za-z0-9]+$ ]]; then
+        echo "$COURSE_ID:$COURSE_NAME" >> "$COURSES_FILE"
+        log_action "Created course $COURSE_NAME ($COURSE_ID)"
+        whiptail --msgbox "Course $COURSE_NAME created." 8 40
+    else
+        whiptail --msgbox "Invalid course details." 8 40
     fi
-
-    OPTION=$(whiptail --title "Modify User" --menu "Choose field to modify" 15 60 4 \
-        "1" "Change username" \
-        "2" "Change password" \
-        "3" "Change home directory" \
-        "4" "Change group" 3>&1 1>&2 2>&3)
-
-    case $OPTION in
-        1)
-            new_name=$(whiptail --inputbox "Enter new username:" 10 50 3>&1 1>&2 2>&3)
-            usermod -l "$new_name" "$username"
-            whiptail --msgbox "Username changed from $username to $new_name." 8 50
-            log_action "Username changed from $username to $new_name"
-            ;;
-        2)
-            password=$(whiptail --passwordbox "Enter new password for $username:" 10 50 3>&1 1>&2 2>&3)
-            echo "$username:$password" | chpasswd
-            whiptail --msgbox "Password updated." 8 40
-            log_action "Password changed for $username"
-            ;;
-        3)
-            new_home=$(whiptail --inputbox "Enter new home directory:" 10 50 3>&1 1>&2 2>&3)
-            usermod -d "$new_home" -m "$username"
-            whiptail --msgbox "Home directory updated." 8 50
-            log_action "Home directory changed for $username to $new_home"
-            ;;
-        4)
-            new_group=$(whiptail --inputbox "Enter new group name:" 10 50 3>&1 1>&2 2>&3)
-            groupadd "$new_group" 2>/dev/null
-            usermod -g "$new_group" "$username"
-            whiptail --msgbox "Group updated." 8 40
-            log_action "Group changed for $username to $new_group"
-            ;;
-    esac
 }
 
-# List users
-list_system_users() {
-    awk -F: '{ if ($3 >= 1000 && $1 != "nobody") print $1 }' /etc/passwd > /tmp/userlist.txt
-    whiptail --textbox /tmp/userlist.txt 20 60
-    rm -f /tmp/userlist.txt
+# Enroll Student
+enroll_student() {
+    STUDENT_ID=$(whiptail --inputbox "Enter student ID to enroll:" 10 50 3>&1 1>&2 2>&3)
+    COURSE_ID=$(whiptail --inputbox "Enter course ID:" 10 50 3>&1 1>&2 2>&3)
+
+    if grep -q "^$STUDENT_ID:" "$STUDENTS_FILE" && grep -q "^$COURSE_ID:" "$COURSES_FILE"; then
+        echo "$STUDENT_ID:$COURSE_ID" >> "$ENROLLMENTS_FILE"
+        log_action "Enrolled student $STUDENT_ID to course $COURSE_ID"
+        whiptail --msgbox "Enrolled student $STUDENT_ID in course $COURSE_ID." 8 50
+    else
+        whiptail --msgbox "Invalid student ID or course ID." 8 40
+    fi
+}
+
+# View All Courses
+view_courses() {
+    if [[ -s "$COURSES_FILE" ]]; then
+        whiptail --textbox "$COURSES_FILE" 20 60
+    else
+        whiptail --msgbox "No courses found." 8 40
+    fi
+}
+
+# View Enrollments
+view_enrollments() {
+    if [[ -s "$ENROLLMENTS_FILE" ]]; then
+        OUTPUT=""
+        while IFS=: read -r SID CID; do
+            STUDENT_NAME=$(grep "^$SID:" "$STUDENTS_FILE" | cut -d: -f2)
+            COURSE_NAME=$(grep "^$CID:" "$COURSES_FILE" | cut -d: -f2)
+            OUTPUT+="Student: $STUDENT_NAME ($SID) - Course: $COURSE_NAME ($CID)\n"
+        done < "$ENROLLMENTS_FILE"
+        echo -e "$OUTPUT" > temp_enrollments.txt
+        whiptail --textbox temp_enrollments.txt 20 60
+        rm temp_enrollments.txt
+    else
+        whiptail --msgbox "No enrollments found." 8 40
+    fi
+}
+
+# Modify Course Teacher (Placeholder)
+modify_teacher() {
+    whiptail --msgbox "Modify teacher feature not implemented yet." 8 40
+}
+
+# Delete Student
+delete_student() {
+    STUDENT_ID=$(whiptail --inputbox "Enter Student ID to delete:" 10 50 3>&1 1>&2 2>&3)
+
+    if grep -q "^$STUDENT_ID:" "$STUDENTS_FILE"; then
+        whiptail --yesno "Are you sure you want to delete student ID $STUDENT_ID?" 8 50
+        if [[ $? -eq 0 ]]; then
+            grep -v "^$STUDENT_ID:" "$STUDENTS_FILE" > temp && mv temp "$STUDENTS_FILE"
+            grep -v "^$STUDENT_ID:" "$ENROLLMENTS_FILE" > temp && mv temp "$ENROLLMENTS_FILE"
+            log_action "Deleted student $STUDENT_ID"
+            whiptail --msgbox "Student $STUDENT_ID deleted." 8 40
+        fi
+    else
+        whiptail --msgbox "Student ID not found." 8 40
+    fi
+}
+
+# View All Students
+view_students() {
+    if [[ -s "$STUDENTS_FILE" ]]; then
+        whiptail --textbox "$STUDENTS_FILE" 20 60
+    else
+        whiptail --msgbox "No student records found." 8 40
+    fi
+}
+
+# Search Student
+search_student() {
+    QUERY=$(whiptail --inputbox "Enter student name or ID to search:" 10 50 3>&1 1>&2 2>&3)
+    grep -i "$QUERY" "$STUDENTS_FILE" > temp_result.txt
+    if [[ -s temp_result.txt ]]; then
+        whiptail --textbox temp_result.txt 15 60
+    else
+        whiptail --msgbox "No matching records found." 8 40
+    fi
+    rm -f temp_result.txt
 }
 
 # Main Menu
 main_menu() {
     while true; do
-        CHOICE=$(whiptail --title "Linux User Management System" --menu "Choose an option:" 20 60 10 \
-            "1" "Add User" \
-            "2" "Delete User" \
-            "3" "Modify User" \
-            "4" "List Users" \
-            "5" "Exit" 3>&1 1>&2 2>&3)
+        OPTION=$(whiptail --title "Student Management System" --menu "Choose an option:" 20 60 12 \
+        "1" "Create Semester" \
+        "2" "Create User" \
+        "3" "Create Course" \
+        "4" "Enroll Student in Course" \
+        "5" "View Courses" \
+        "6" "View Course Enrollments" \
+        "7" "Modify Course Teacher" \
+        "8" "Delete Student" \
+        "9" "View Students (Admin)" \
+        "10" "Search Student" \
+        "11" "Exit" 3>&1 1>&2 2>&3)
 
-        case $CHOICE in
-            1) add_system_user ;;
-            2) delete_system_user ;;
-            3) modify_system_user ;;
-            4) list_system_users ;;
-            5) exit ;;
-            *) whiptail --msgbox "Invalid option. Try again." 8 40 ;;
+        case $OPTION in
+            1) create_semester ;;
+            2) create_user ;;
+            3) create_course ;;
+            4) enroll_student ;;
+            5) view_courses ;;
+            6) view_enrollments ;;
+            7) modify_teacher ;;
+            8) delete_student ;;
+            9) view_students ;;
+            10) search_student ;;
+            11) break ;;
+            *) whiptail --msgbox "Invalid option." 8 40 ;;
         esac
     done
 }
 
 # Run script
-check_root
+head_banner
 main_menu
